@@ -30,16 +30,25 @@ const MIME_TYPES: Record<string, string> = {
 }
 
 export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) {
-  const url = req.url || '/'
+  const rawUrl = req.url || '/'
+  const pathname = (() => {
+    try {
+      // Parse request path safely and ignore query/hash components so
+      // cache-busting URLs like "/?fresh=1" still resolve to index.html.
+      return new URL(rawUrl, 'http://127.0.0.1').pathname || '/'
+    } catch {
+      return '/'
+    }
+  })()
 
-  if (url === '/' || url === '/index.html') {
+  if (pathname === '/' || pathname === '/index.html') {
     res.writeHead(200, { 'Content-Type': 'text/html' })
     res.end(HTML_SHELL)
     return
   }
 
   // Only serve known asset files from the webview directory
-  const basename = path.basename(url)
+  const basename = path.basename(pathname)
   const ext = path.extname(basename)
   const mime = MIME_TYPES[ext]
 
