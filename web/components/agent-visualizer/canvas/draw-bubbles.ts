@@ -22,7 +22,7 @@ export function drawMessageBubblesWorld(
     for (const bubble of agent.messageBubbles) {
       const age = time - bubble.time
       const alpha = bubbleAlpha(age, agent.opacity)
-      if (alpha < 0.01) continue
+      if (alpha < BUBBLE_DRAW.minReadableAlpha) continue
 
       const { role, text } = bubble
 
@@ -31,8 +31,12 @@ export function drawMessageBubblesWorld(
       const textColor = isThinking ? COLORS.roleThinkingText : role === 'user' ? COLORS.roleUserText : COLORS.roleAssistantText
       const label = isThinking ? '\uD83D\uDCAD THINKING' : role === 'user' ? 'USER' : 'CLAUDE'
 
-      // Thinking bubbles: smaller font, tighter spacing, more translucent
+      // Thinking bubbles stay compact, but remain readable at the top canvas edge.
       const style = isThinking ? BUBBLE_DRAW.thinking : BUBBLE_DRAW.normal
+      const fillAlpha = isThinking ? BUBBLE_DRAW.thinkingFillAlpha : BUBBLE_DRAW.fillAlpha
+      const strokeAlpha = isThinking ? BUBBLE_DRAW.thinkingStrokeAlpha : BUBBLE_DRAW.strokeAlpha
+      const labelAlpha = isThinking ? BUBBLE_DRAW.thinkingLabelAlpha : BUBBLE_DRAW.labelAlpha
+      const bodyAlpha = isThinking ? BUBBLE_DRAW.thinkingBodyAlpha : BUBBLE_DRAW.bodyAlpha
 
       const font = `${style.fontSize}px monospace`
       ctx.font = font
@@ -41,7 +45,7 @@ export function drawMessageBubblesWorld(
       if (bubble._cachedWrappedLines && bubble._cachedWrappedFont === font) {
         allLines = bubble._cachedWrappedLines
       } else {
-        allLines = wrapText(ctx, text, BUBBLE_MAX_W - 16)
+        allLines = wrapText(ctx, text, BUBBLE_MAX_W - style.padding * 2 - 4)
         bubble._cachedWrappedLines = allLines
         bubble._cachedWrappedFont = font
       }
@@ -57,7 +61,7 @@ export function drawMessageBubblesWorld(
       bubble._cachedLines = lines.length
 
       ctx.save()
-      ctx.globalAlpha = isThinking ? alpha * 0.7 : alpha
+      ctx.globalAlpha = alpha
 
       if (firstVisible) {
         const triY = cursorY + bubbleH / 2
@@ -65,32 +69,36 @@ export function drawMessageBubblesWorld(
         ctx.moveTo(anchorX, triY - BUBBLE_DRAW.triOffset)
         ctx.lineTo(anchorX - BUBBLE_DRAW.triWidth, triY)
         ctx.lineTo(anchorX, triY + BUBBLE_DRAW.triOffset)
-        ctx.fillStyle = withAlpha(bgColor, 0.12)
+        ctx.fillStyle = withAlpha(bgColor, fillAlpha)
         ctx.fill()
         firstVisible = false
       }
 
       ctx.beginPath()
       ctx.roundRect(anchorX, cursorY, bubbleW, bubbleH, BUBBLE_DRAW.borderRadius)
-      ctx.fillStyle = withAlpha(bgColor, isThinking ? 0.08 : 0.12)
+      ctx.fillStyle = withAlpha(bgColor, fillAlpha)
       ctx.fill()
-      ctx.strokeStyle = withAlpha(bgColor, isThinking ? 0.15 : 0.25)
-      ctx.lineWidth = 0.5
+      ctx.strokeStyle = withAlpha(bgColor, strokeAlpha)
+      ctx.lineWidth = 0.75
       ctx.stroke()
+
+      ctx.shadowColor = BUBBLE_DRAW.textShadowColor
+      ctx.shadowBlur = BUBBLE_DRAW.textShadowBlur
+      ctx.shadowOffsetY = 1
 
       ctx.font = `${style.labelSize}px monospace`
       ctx.textAlign = 'left'
       ctx.textBaseline = 'top'
-      ctx.fillStyle = textColor + (isThinking ? '60' : '80')
+      ctx.fillStyle = textColor + labelAlpha
       ctx.fillText(label, anchorX + style.padding, cursorY + 3)
 
       ctx.font = `italic ${style.fontSize}px monospace`
-      ctx.fillStyle = textColor + (isThinking ? 'b0' : '')
+      ctx.fillStyle = textColor + bodyAlpha
       for (let i = 0; i < lines.length; i++) {
         ctx.fillText(lines[i], anchorX + style.padding, cursorY + style.headerH + i * style.lineH)
       }
       if (truncated) {
-        ctx.fillStyle = textColor + '80'
+        ctx.fillStyle = textColor + labelAlpha
         ctx.fillText('...', anchorX + style.padding, cursorY + style.headerH + lines.length * style.lineH)
       }
 

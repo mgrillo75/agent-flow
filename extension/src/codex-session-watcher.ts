@@ -60,8 +60,22 @@ function codexHome(): string {
   return process.env.CODEX_HOME || path.join(os.homedir(), '.codex')
 }
 
+export function codexSessionsRoot(
+  codexHomePath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix
+  let normalized = pathApi.normalize(codexHomePath)
+  const root = pathApi.parse(normalized).root
+  while (normalized.length > root.length && normalized.endsWith(pathApi.sep)) {
+    normalized = normalized.slice(0, -1)
+  }
+  if (pathApi.basename(normalized).toLowerCase() === 'sessions') return normalized
+  return pathApi.join(normalized, 'sessions')
+}
+
 function sessionsRoot(): string {
-  return path.join(codexHome(), 'sessions')
+  return codexSessionsRoot(codexHome())
 }
 
 /** Walk the past SCAN_DAYS of sessions/YYYY/MM/DD directories relative to `now`.
@@ -113,6 +127,28 @@ function readSessionCwd(filePath: string): string | null {
       return typeof parsed.payload?.cwd === 'string' ? parsed.payload.cwd : null
     } finally { fs.closeSync(fd) }
   } catch { return null }
+}
+
+function normalizePathForWorkspaceComparison(p: string, platform: NodeJS.Platform): string {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix
+  let normalized = pathApi.normalize(p)
+  const root = pathApi.parse(normalized).root
+  while (normalized.length > root.length && normalized.endsWith(pathApi.sep)) {
+    normalized = normalized.slice(0, -1)
+  }
+  return platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+export function pathMatchesWorkspace(
+  candidatePath: string,
+  workspacePath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix
+  const candidate = normalizePathForWorkspaceComparison(candidatePath, platform)
+  const workspace = normalizePathForWorkspaceComparison(workspacePath, platform)
+  if (candidate === workspace) return true
+  return candidate.startsWith(workspace + pathApi.sep)
 }
 
 // ─── Watcher ───────────────────────────────────────────────────────────────
@@ -240,8 +276,7 @@ export class CodexSessionWatcher implements AgentSessionWatcher {
 
   private pathMatchesWorkspace(p: string): boolean {
     if (!this.workspacePath) return true
-    if (p === this.workspacePath) return true
-    return p.startsWith(this.workspacePath + path.sep)
+    return pathMatchesWorkspace(p, this.workspacePath)
   }
 
   private attachSession(filePath: string, stat: fs.Stats): void {

@@ -1,3 +1,4 @@
 {
-  "agentVisualizer.devServerPort": 3000
+  "agentVisualizer.devServerPort": 3000,
+  "agentVisualizer.runtime": "codex"
 }

@@ -72,6 +72,12 @@ To restrict to one runtime:
 
 For non-default Codex installs, set the `CODEX_HOME` environment variable.
 
+Codex sessions are workspace-filtered by default. For a standalone Codex-only
+viewer that should show live workers spawned from any working directory, set
+`AGENT_FLOW_CODEX_WORKSPACE=all`. The local `launch-agent-flow-codex.cmd`
+launcher uses that mode so the UI on port 3002 can surface Codex workers across
+repos.
+
 ### JSONL Event Log
 
 You can also point Agent Flow at a JSONL event log file:

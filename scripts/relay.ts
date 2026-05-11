@@ -79,6 +79,29 @@ function broadcast(data: string) {
 
 const eventBuffer = new Map<string, AgentEvent[]>()
 
+function sortSessionsForReplay(sessionList: readonly SessionInfo[]): SessionInfo[] {
+  return [...sessionList].sort((a, b) => {
+    const aActive = a.status === 'active' ? 1 : 0
+    const bActive = b.status === 'active' ? 1 : 0
+    if (aActive !== bActive) return bActive - aActive
+    if (a.lastActivityTime !== b.lastActivityTime) return b.lastActivityTime - a.lastActivityTime
+    if (a.startTime !== b.startTime) return b.startTime - a.startTime
+    return a.id.localeCompare(b.id)
+  })
+}
+
+function getBufferedSessionReplayBatches(
+  sessionList: readonly SessionInfo[],
+  buffers: ReadonlyMap<string, AgentEvent[]>,
+): AgentEvent[][] {
+  const batches: AgentEvent[][] = []
+  for (const session of sortSessionsForReplay(sessionList)) {
+    const buffered = buffers.get(session.id)
+    if (buffered && buffered.length > 0) batches.push(buffered)
+  }
+  return batches
+}
+
 function broadcastEvent(event: AgentEvent) {
   sessionEventCount++
   if (event.type === 'model_detected') {
@@ -354,6 +377,7 @@ export interface Relay {
 }
 
 export type RelayRuntimeMode = 'claude' | 'codex' | 'auto'
+export type CodexWorkspaceScope = 'workspace' | 'all'
 
 export interface RelayOptions {
   workspace: string
@@ -363,12 +387,25 @@ export interface RelayOptions {
    *  Mirrors the extension's `agentVisualizer.runtime` setting so users of the
    *  dev relay and `npx agent-flow-app` have a way to opt out of one runtime. */
   runtime?: RelayRuntimeMode
+  /** Codex-only workspace scope. Defaults to AGENT_FLOW_CODEX_WORKSPACE, or
+   *  'workspace'. Use 'all' only for standalone Codex launchers that should
+   *  surface live Codex workers from any cwd. */
+  codexWorkspaceScope?: CodexWorkspaceScope
 }
 
 function resolveRuntimeMode(explicit?: RelayRuntimeMode): RelayRuntimeMode {
   if (explicit === 'claude' || explicit === 'codex' || explicit === 'auto') return explicit
   const raw = process.env.AGENT_FLOW_RUNTIME
   return raw === 'claude' || raw === 'codex' ? raw : 'auto'
+}
+
+function resolveCodexWorkspaceScope(explicit?: CodexWorkspaceScope): CodexWorkspaceScope {
+  if (explicit === 'all' || explicit === 'workspace') return explicit
+  return process.env.AGENT_FLOW_CODEX_WORKSPACE === 'all' ? 'all' : 'workspace'
+}
+
+function resolveCodexWatcherWorkspace(workspace: string, explicit?: CodexWorkspaceScope): string | null {
+  return resolveCodexWorkspaceScope(explicit) === 'all' ? null : workspace
 }
 
 export async function createRelay(options: RelayOptions): Promise<Relay> {
@@ -425,7 +462,8 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
   // wiring both would double-broadcast session-started to SSE clients.
   let codexWatcher: CodexSessionWatcher | null = null
   if (wantCodex) {
-    codexWatcher = new CodexSessionWatcher(workspace)
+    const codexWorkspace = resolveCodexWatcherWorkspace(workspace, options.codexWorkspaceScope)
+    codexWatcher = new CodexSessionWatcher(codexWorkspace)
     codexWatcher.onEvent((event) => broadcastEvent(event))
     codexWatcher.onSessionLifecycle((lifecycle) => {
       broadcastSessionLifecycle(lifecycle.type, lifecycle.sessionId, lifecycle.label)
@@ -494,18 +532,10 @@ export async function createRelay(options: RelayOptions): Promise<Relay> {
         sendSSE(res, { type: 'session-list', sessions: sessionList })
       }
 
-      // Replay buffered events for the most recent active session
-      const sorted = [...sessionList].sort((a, b) => {
-        const aActive = a.status === 'active' ? 1 : 0
-        const bActive = b.status === 'active' ? 1 : 0
-        if (aActive !== bActive) return bActive - aActive
-        return b.lastActivityTime - a.lastActivityTime
-      })
-      if (sorted.length > 0) {
-        const buffered = eventBuffer.get(sorted[0].id)
-        if (buffered) {
-          sendSSE(res, { type: 'agent-event-batch', events: buffered })
-        }
+      // Replay buffered events for every listed session in active/recent order
+      // so tab switching has history immediately after a client reconnects.
+      for (const buffered of getBufferedSessionReplayBatches(sessionList, eventBuffer)) {
+        sendSSE(res, { type: 'agent-event-batch', events: buffered })
       }
     },
 

@@ -314,8 +314,21 @@ export const COST_PANEL = {
 // ─── Bubble drawing constants ───────────────────────────────────────────────
 
 export const BUBBLE_DRAW = {
-  thinking: { fontSize: 5.5, labelSize: 5, lineH: 7.5, padding: 5, headerH: 10 },
-  normal: { fontSize: 7, labelSize: 6, lineH: 10, padding: 6, headerH: 12 },
+  thinking: { fontSize: 6.5, labelSize: 5.5, lineH: 8.5, padding: 5, headerH: 11 },
+  normal: { fontSize: 8, labelSize: 6.5, lineH: 11, padding: 6, headerH: 13 },
+  /** World-space message bubble opacity values */
+  fillAlpha: 0.24,
+  thinkingFillAlpha: 0.22,
+  strokeAlpha: 0.55,
+  thinkingStrokeAlpha: 0.45,
+  labelAlpha: 'cc',
+  thinkingLabelAlpha: 'd8',
+  bodyAlpha: 'ff',
+  thinkingBodyAlpha: 'f0',
+  textShadowColor: 'rgba(0, 0, 0, 0.75)',
+  textShadowBlur: 3,
+  /** Do not draw world-space bubbles once the fade makes text unreadable */
+  minReadableAlpha: 0.15,
   /** Triangle pointer offsets */
   triOffset: 4,
   triWidth: 5,

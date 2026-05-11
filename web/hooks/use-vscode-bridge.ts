@@ -63,41 +63,6 @@ export function useVSCodeBridge(): BridgeHookResult {
   const sessionSwitchPendingRef = useRef(false)
   const [sessionsWithActivity, setSessionsWithActivity] = useState<Set<string>>(new Set())
 
-  // Connect to standalone dev relay server via SSE when not in VS Code
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const bridge = vscodeBridge
-    if (!bridge) return
-
-    // Skip in VS Code — extension handles events via postMessage
-    if (bridge.isVSCode) return
-
-    // Connect to relay in dev mode or standalone CLI mode
-    const isStandalone = process.env.AGENT_FLOW_STANDALONE === '1'
-    if (!isStandalone && (process.env.NODE_ENV !== 'development' || process.env.NEXT_PUBLIC_DEMO !== '0')) return
-
-    const relayPort = process.env.NEXT_PUBLIC_RELAY_PORT || ''
-    const es = new EventSource(relayPort ? `http://127.0.0.1:${relayPort}/events` : '/events')
-
-    es.onopen = () => {
-      setConnectionStatus('connected')
-      setUseMockData(false)
-    }
-    es.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data)
-        window.postMessage(data, '*')
-      } catch {}
-    }
-    es.onerror = () => {
-      setConnectionStatus('disconnected')
-    }
-
-    return () => {
-      es.close()
-    }
-  }, [])
-
   useEffect(() => {
     const bridge = vscodeBridge
     if (!bridge) { return }
@@ -238,6 +203,41 @@ export function useVSCodeBridge(): BridgeHookResult {
       unsubStatus()
       unsubConfig()
       unsubSession()
+    }
+  }, [])
+
+  // Connect after bridge subscriptions so immediate standalone SSE replay is captured.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const bridge = vscodeBridge
+    if (!bridge) return
+
+    // Skip in VS Code - extension handles events via postMessage
+    if (bridge.isVSCode) return
+
+    // Connect to relay in dev mode or standalone CLI mode
+    const isStandalone = process.env.AGENT_FLOW_STANDALONE === '1'
+    if (!isStandalone && (process.env.NODE_ENV !== 'development' || process.env.NEXT_PUBLIC_DEMO !== '0')) return
+
+    const relayPort = process.env.NEXT_PUBLIC_RELAY_PORT || ''
+    const es = new EventSource(relayPort ? `http://127.0.0.1:${relayPort}/events` : '/events')
+
+    es.onopen = () => {
+      setConnectionStatus('connected')
+      setUseMockData(false)
+    }
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        window.postMessage(data, '*')
+      } catch {}
+    }
+    es.onerror = () => {
+      setConnectionStatus('disconnected')
+    }
+
+    return () => {
+      es.close()
     }
   }, [])
 

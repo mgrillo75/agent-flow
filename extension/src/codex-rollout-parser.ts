@@ -26,9 +26,10 @@
  *                   only. event_msg.exec_command_end / patch_apply_end are
  *                   parallel signals and are skipped.
  *
- * Subagents: Codex does not currently expose subagent spawning in rollouts.
- * The parser emits a single orchestrator; if Codex adds spawn_agent / wait_agent
- * in future, add mapping here.
+ * Subagents: modern Codex rollouts expose spawn_agent / wait_agent as
+ * function_call records. The parser keeps the normal tool-call visualization
+ * and additionally maps successful spawn/wait outputs to AgentEvent lifecycle
+ * events so child agents render on the canvas.
  */
 
 import { AgentEvent } from './protocol'
@@ -44,6 +45,9 @@ import { estimateTokenCost, estimateTokensFromText } from './token-estimator'
 import { createLogger } from './logger'
 
 const log = createLogger('CodexRolloutParser')
+
+/** Tab title from first Codex user turn; wider than PREVIEW_MAX so cwd paths aren’t clipped. */
+const CODEX_TAB_LABEL_MAX_CHARS = 400
 
 // ─── State ─────────────────────────────────────────────────────────────────
 
@@ -62,6 +66,12 @@ export interface PendingCodexToolCall {
   filePath?: string
 }
 
+interface PendingCodexSpawn {
+  task: string
+  agentType?: string
+  role?: string
+}
+
 export interface CodexRolloutState {
   /** Model id from the most recent turn_context. Authoritative. */
   model: string | null
@@ -71,6 +81,10 @@ export interface CodexRolloutState {
   label: string | null
   /** Pending tool calls, keyed by call_id. */
   pendingToolCalls: Map<string, PendingCodexToolCall>
+  /** spawn_agent metadata keyed by call_id until the output reveals agent_id. */
+  pendingSpawns: Map<string, PendingCodexSpawn>
+  /** Child display names keyed by Codex agent_id for wait_agent completion. */
+  subagentNamesById: Map<string, string>
   /** Content hashes of already-emitted messages (for dedup across replays). */
   seenMessageHashes: Set<string>
   /** Running token breakdown. */
@@ -91,6 +105,8 @@ export function createCodexRolloutState(): CodexRolloutState {
     cwd: null,
     label: null,
     pendingToolCalls: new Map(),
+    pendingSpawns: new Map(),
+    subagentNamesById: new Map(),
     seenMessageHashes: new Set(),
     contextBreakdown: {
       systemPrompt: SYSTEM_PROMPT_BASE_TOKENS,
@@ -236,6 +252,14 @@ function parseArgsJson(raw: string | undefined): Record<string, unknown> | undef
   } catch { return undefined }
 }
 
+function parseJsonObject(raw: string): Record<string, unknown> | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw)
+    return isRecord(parsed) ? parsed : undefined
+  } catch { return undefined }
+}
+
 /** Extract an output string from a function_call_output payload.
  *  Codex sometimes encodes output as a JSON object with nested .output. */
 function extractOutputString(raw: FunctionCallOutputPayload['output']): string {
@@ -249,6 +273,36 @@ function extractOutputString(raw: FunctionCallOutputPayload['output']): string {
   }
   if (isRecord(raw) && typeof raw.output === 'string') return raw.output
   return ''
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return undefined
+}
+
+function summarizeSpawnTask(args: Record<string, unknown> | undefined): string {
+  if (!args) return 'Codex subagent'
+  const message = firstString(args.message)
+  if (message) return message.slice(0, MESSAGE_MAX)
+
+  const items = args.items
+  if (Array.isArray(items)) {
+    const textItems = items
+      .filter(isRecord)
+      .map(item => firstString(item.text, item.name, item.path))
+      .filter((text): text is string => Boolean(text))
+    if (textItems.length > 0) return textItems.join(' ').slice(0, MESSAGE_MAX)
+  }
+
+  return firstString(args.agent_type, args.model) || 'Codex subagent'
+}
+
+function buildChildDisplayName(agentId: string, nickname: unknown, agentType?: string): string {
+  if (typeof nickname === 'string' && nickname.trim()) return nickname.trim()
+  const suffix = agentId.length > 8 ? agentId.slice(-8) : agentId
+  return agentType ? `${agentType}-${suffix}` : `subagent-${suffix}`
 }
 
 /** Pull the first "*** Update File: /path" line out of an apply_patch body. */
@@ -374,7 +428,11 @@ export class CodexRolloutParser {
     if (role === 'user') {
       state.contextBreakdown.userMessages += estimateTokensFromText(text)
       if (!state.label) {
-        state.label = text.slice(0, PREVIEW_MAX)
+        const firstLine = text.split('\n')[0].trim()
+        state.label =
+          firstLine.length <= CODEX_TAB_LABEL_MAX_CHARS
+            ? firstLine
+            : `${firstLine.slice(0, CODEX_TAB_LABEL_MAX_CHARS - 2)}..`
         this.delegate.setLabel?.(state.label)
       }
     }
@@ -403,6 +461,13 @@ export class CodexRolloutParser {
     state.pendingToolCalls.set(callId, {
       name, args: argsSummary, startTime: Date.now(), filePath,
     })
+    if (name === 'spawn_agent') {
+      state.pendingSpawns.set(callId, {
+        task: summarizeSpawnTask(args),
+        agentType: firstString(args?.agent_type),
+        role: firstString(args?.role),
+      })
+    }
 
     this.delegate.emit({
       time: this.delegate.elapsed(),
@@ -444,7 +509,91 @@ export class CodexRolloutParser {
         ...(discovery ? { discovery } : {}),
       },
     })
+    this.handleCodexAgentLifecycleOutput(pending.name, callId, output, state)
     this.emitContextUpdate(state)
+  }
+
+  private handleCodexAgentLifecycleOutput(
+    toolName: string,
+    callId: string,
+    output: string,
+    state: CodexRolloutState,
+  ): void {
+    if (toolName === 'spawn_agent') {
+      return this.handleSpawnAgentOutput(callId, output, state)
+    }
+    if (toolName === 'wait_agent') {
+      return this.handleWaitAgentOutput(output, state)
+    }
+  }
+
+  private handleSpawnAgentOutput(callId: string, output: string, state: CodexRolloutState): void {
+    const spawn = state.pendingSpawns.get(callId)
+    state.pendingSpawns.delete(callId)
+    if (!spawn || detectError(output)) return
+
+    const parsed = parseJsonObject(output)
+    const agentId = typeof parsed?.agent_id === 'string' ? parsed.agent_id.trim() : ''
+    if (!agentId) return
+
+    const child = buildChildDisplayName(agentId, parsed?.nickname, spawn.agentType)
+    state.subagentNamesById.set(agentId, child)
+
+    const payloadExtras = {
+      ...(spawn.agentType ? { agent_type: spawn.agentType } : {}),
+      ...(spawn.role ? { role: spawn.role } : {}),
+      agent_id: agentId,
+    }
+
+    this.delegate.emit({
+      time: this.delegate.elapsed(),
+      type: 'subagent_dispatch',
+      payload: {
+        parent: ORCHESTRATOR_NAME,
+        child,
+        task: spawn.task,
+        ...payloadExtras,
+      },
+    })
+    this.delegate.emit({
+      time: this.delegate.elapsed(),
+      type: 'agent_spawn',
+      payload: {
+        name: child,
+        parent: ORCHESTRATOR_NAME,
+        task: spawn.task,
+        ...payloadExtras,
+      },
+    })
+  }
+
+  private handleWaitAgentOutput(output: string, state: CodexRolloutState): void {
+    const parsed = parseJsonObject(output)
+    if (!parsed || !isRecord(parsed.status)) return
+
+    for (const [agentId, status] of Object.entries(parsed.status)) {
+      if (!isRecord(status) || typeof status.completed !== 'string' || !status.completed.trim()) continue
+
+      const child = state.subagentNamesById.get(agentId) ?? buildChildDisplayName(agentId, undefined)
+      state.subagentNamesById.set(agentId, child)
+      const summary = status.completed.trim().slice(0, RESULT_MAX)
+
+      this.delegate.emit({
+        time: this.delegate.elapsed(),
+        type: 'subagent_return',
+        payload: {
+          parent: ORCHESTRATOR_NAME,
+          child,
+          summary,
+          agent_id: agentId,
+        },
+      })
+      this.delegate.emit({
+        time: this.delegate.elapsed(),
+        type: 'agent_complete',
+        payload: { name: child, agent_id: agentId },
+      })
+    }
   }
 
   private handleCustomToolCall(payload: CustomToolCallPayload, state: CodexRolloutState): void {

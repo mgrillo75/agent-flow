@@ -38,11 +38,66 @@ function runFixture() {
 }
 
 describe('CodexRolloutParser', () => {
-  it('emits agent_spawn exactly once on the first record', () => {
+  it('emits orchestrator agent_spawn exactly once on the first record', () => {
     const { events } = runFixture()
-    const spawns = events.filter(e => e.type === 'agent_spawn')
+    const spawns = events.filter(e => e.type === 'agent_spawn' && e.payload.isMain === true)
     assert.equal(spawns.length, 1)
     assert.equal(spawns[0].payload.isMain, true)
+  })
+
+  it('successful spawn_agent emits one child agent_spawn plus subagent_dispatch', () => {
+    const { events } = runFixture()
+    const childSpawns = events.filter(e => e.type === 'agent_spawn' && e.payload.parent === 'orchestrator')
+    const dispatches = events.filter(e => e.type === 'subagent_dispatch')
+
+    assert.equal(childSpawns.length, 1)
+    assert.equal(childSpawns[0].payload.name, 'Locke')
+    assert.equal(childSpawns[0].payload.task, 'Inspect parser behavior and report risks.')
+    assert.equal(childSpawns[0].payload.agent_type, 'explorer')
+
+    assert.equal(dispatches.length, 1)
+    assert.equal(dispatches[0].payload.parent, 'orchestrator')
+    assert.equal(dispatches[0].payload.child, 'Locke')
+    assert.equal(dispatches[0].payload.task, 'Inspect parser behavior and report risks.')
+  })
+
+  it('failed spawn_agent output does not emit a child agent', () => {
+    const events: AgentEvent[] = []
+    const parser = new CodexRolloutParser({ emit: (e) => events.push(e), elapsed: () => 0 })
+    const state = createCodexRolloutState()
+
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'spawn_agent',
+        arguments: '{"agent_type":"worker","message":"Attempt a failed spawn."}',
+        call_id: 'spawn-fail',
+      },
+    }), state)
+    parser.processLine(JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'spawn-fail', output: 'Error: agent quota exceeded' },
+    }), state)
+
+    const childSpawns = events.filter(e => e.type === 'agent_spawn' && e.payload.parent === 'orchestrator')
+    const dispatches = events.filter(e => e.type === 'subagent_dispatch')
+    assert.equal(childSpawns.length, 0)
+    assert.equal(dispatches.length, 0)
+  })
+
+  it('wait_agent completed status emits subagent_return and child agent_complete using nickname mapping', () => {
+    const { events } = runFixture()
+    const returns = events.filter(e => e.type === 'subagent_return')
+    const completes = events.filter(e => e.type === 'agent_complete' && e.payload.name === 'Locke')
+
+    assert.equal(returns.length, 1)
+    assert.equal(returns[0].payload.parent, 'orchestrator')
+    assert.equal(returns[0].payload.child, 'Locke')
+    assert.equal(returns[0].payload.summary, 'Parser inspection complete.')
+
+    assert.equal(completes.length, 1)
+    assert.equal(completes[0].payload.name, 'Locke')
   })
 
   it('detects the model from turn_context (not session_meta)', () => {
