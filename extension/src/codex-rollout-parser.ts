@@ -34,6 +34,7 @@
 
 import { AgentEvent } from './protocol'
 import {
+  CHILD_NAME_MAX,
   ORCHESTRATOR_NAME, HASH_PREFIX_MAX, MESSAGE_MAX, PREVIEW_MAX, RESULT_MAX,
   SYSTEM_PROMPT_BASE_TOKENS, SYSTEM_CONTENT_PREFIXES,
 } from './constants'
@@ -68,6 +69,7 @@ export interface PendingCodexToolCall {
 
 interface PendingCodexSpawn {
   task: string
+  displayName?: string
   agentType?: string
   role?: string
 }
@@ -299,7 +301,24 @@ function summarizeSpawnTask(args: Record<string, unknown> | undefined): string {
   return firstString(args.agent_type, args.model) || 'Codex subagent'
 }
 
-function buildChildDisplayName(agentId: string, nickname: unknown, agentType?: string): string {
+function extractSpawnDisplayName(args: Record<string, unknown> | undefined): string | undefined {
+  const raw = firstString(
+    args?.description,
+    args?.agent_name,
+    args?.name,
+    args?.nickname,
+  )
+  if (!raw) return undefined
+  return raw.slice(0, CHILD_NAME_MAX)
+}
+
+function buildChildDisplayName(
+  agentId: string,
+  spawnName: string | undefined,
+  nickname: unknown,
+  agentType?: string,
+): string {
+  if (spawnName && spawnName.trim()) return spawnName.trim()
   if (typeof nickname === 'string' && nickname.trim()) return nickname.trim()
   const suffix = agentId.length > 8 ? agentId.slice(-8) : agentId
   return agentType ? `${agentType}-${suffix}` : `subagent-${suffix}`
@@ -464,6 +483,7 @@ export class CodexRolloutParser {
     if (name === 'spawn_agent') {
       state.pendingSpawns.set(callId, {
         task: summarizeSpawnTask(args),
+        displayName: extractSpawnDisplayName(args),
         agentType: firstString(args?.agent_type),
         role: firstString(args?.role),
       })
@@ -536,13 +556,15 @@ export class CodexRolloutParser {
     const agentId = typeof parsed?.agent_id === 'string' ? parsed.agent_id.trim() : ''
     if (!agentId) return
 
-    const child = buildChildDisplayName(agentId, parsed?.nickname, spawn.agentType)
+    const child = buildChildDisplayName(agentId, spawn.displayName, parsed?.nickname, spawn.agentType)
     state.subagentNamesById.set(agentId, child)
 
     const payloadExtras = {
       ...(spawn.agentType ? { agent_type: spawn.agentType } : {}),
       ...(spawn.role ? { role: spawn.role } : {}),
       agent_id: agentId,
+      parent_id: ORCHESTRATOR_NAME,
+      child_id: agentId,
     }
 
     this.delegate.emit({

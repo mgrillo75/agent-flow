@@ -15,37 +15,39 @@ export function handleToolCallStart(
   ctx: ProcessEventContext,
 ): void {
   const agentName = asString(payload.agent)
+  const agentId = asString(payload.agent_id, agentName)
+  const agentKey = state.agents.has(agentId) ? agentId : (state.agents.has(agentName) ? agentName : agentId)
   const toolName = asString(payload.tool)
   const args = asString(payload.args)
   const inputData = (payload.inputData && typeof payload.inputData === 'object' && !Array.isArray(payload.inputData))
     ? payload.inputData as Record<string, unknown> : undefined
-  const agent = state.agents.get(agentName)
+  const agent = state.agents.get(agentKey)
 
   if (agent) {
     // Dedup: skip if there's already a running tool call for the same agent+tool
     // created within the last 3 seconds (race between Hook Server and Session Watcher)
     let isDuplicate = false
     for (const tc of state.toolCalls.values()) {
-      if (tc.agentId === agentName && tc.toolName === toolName && tc.state === 'running' && (currentTime - tc.startTime) < TOOL_DEDUP_WINDOW_S) {
+      if (tc.agentId === agentKey && tc.toolName === toolName && tc.state === 'running' && (currentTime - tc.startTime) < TOOL_DEDUP_WINDOW_S) {
         isDuplicate = true
         break
       }
     }
     if (isDuplicate) return
 
-    state.agents.set(agentName, {
+    state.agents.set(agentKey, {
       ...agent,
       state: 'tool_calling',
       currentTool: toolName,
       toolCalls: agent.toolCalls + 1
     })
 
-    const toolId = `tool-${agentName}-${toolName}-${currentTime}`
+    const toolId = `tool-${agentKey}-${toolName}-${currentTime}`
 
     const pos = ctx.findToolSlot(agent, state.agents, state.toolCalls, currentTime)
 
     state.toolCalls.set(toolId, {
-      id: toolId, agentId: agentName, toolName,
+      id: toolId, agentId: agentKey, toolName,
       state: 'running',
       args,
       inputData,
@@ -55,7 +57,7 @@ export function handleToolCallStart(
       opacity: 0,
     })
 
-    state.edges.push({ id: `edge-${toolId}`, from: agentName, to: toolId, type: 'tool', opacity: 0 })
+    state.edges.push({ id: `edge-${toolId}`, from: agentKey, to: toolId, type: 'tool', opacity: 0 })
 
     state.particles.push({
       id: `p-tc-${currentTime}-${toolId}`,
@@ -66,12 +68,13 @@ export function handleToolCallStart(
     })
 
     // Timeline block
-    const entry = state.timelineEntries.get(agentName)
+    const entry = state.timelineEntries.get(agentKey)
     if (entry) {
       pushTimelineBlock(entry, currentTime, { type: 'tool_call', label: `${toolName}: ${args}`.slice(0, LABEL_LEN_TIMELINE), color: COLORS.tool }, ctx)
     }
 
     // Track file attention
+    const displayAgentName = agent.name || agentKey
     if (toolName === 'Read' || toolName === 'Edit' || toolName === 'Write') {
       const filePath = extractFilePath(inputData, args)
       if (filePath) {
@@ -82,12 +85,12 @@ export function handleToolCallStart(
         if (toolName === 'Read') updated.reads++
         else updated.edits++
         updated.lastAccessed = currentTime
-        if (!updated.agents.includes(agentName)) updated.agents.push(agentName)
+        if (!updated.agents.includes(displayAgentName)) updated.agents.push(displayAgentName)
         state.fileAttention.set(filePath, updated)
       }
     }
 
-    appendConversation(state.conversations, agentName, {
+    appendConversation(state.conversations, agentKey, {
       type: 'tool_call', content: `> ${toolName} ${args}`, timestamp: currentTime,
       toolName, inputData,
     })
@@ -101,15 +104,17 @@ export function handleToolCallEnd(
   ctx: ProcessEventContext,
 ): void {
   const agentName = asString(payload.agent)
+  const agentId = asString(payload.agent_id, agentName)
+  const agentKey = state.agents.has(agentId) ? agentId : (state.agents.has(agentName) ? agentName : agentId)
   const toolName = asString(payload.tool)
   const result = asString(payload.result, 'Done')
   const tokenCost = typeof payload.tokenCost === 'number' ? payload.tokenCost : undefined
   const isError = asBoolean(payload.isError)
   const errorMessage = typeof payload.errorMessage === 'string' ? payload.errorMessage : undefined
-  const agent = state.agents.get(agentName)
+  const agent = state.agents.get(agentKey)
 
   if (agent) {
-    state.agents.set(agentName, {
+    state.agents.set(agentKey, {
       ...agent,
       state: isError ? 'error' : 'thinking',
       currentTool: undefined,
@@ -118,7 +123,7 @@ export function handleToolCallEnd(
 
     const toolState: 'error' | 'complete' = isError ? 'error' : 'complete'
     for (const [id, tc] of state.toolCalls) {
-      if (tc.agentId === agentName && tc.toolName === toolName && tc.state === 'running') {
+      if (tc.agentId === agentKey && tc.toolName === toolName && tc.state === 'running') {
         state.toolCalls.set(id, { ...tc, state: toolState, completeTime: currentTime, result, tokenCost, errorMessage: isError ? (errorMessage || result) : undefined })
 
         const edgeId = `edge-${id}`
@@ -138,7 +143,7 @@ export function handleToolCallEnd(
     }
 
     // Timeline block end
-    const entry = state.timelineEntries.get(agentName)
+    const entry = state.timelineEntries.get(agentKey)
     if (entry) {
       if (isError) {
         const lastBlock = entry.blocks[entry.blocks.length - 1]
@@ -152,7 +157,7 @@ export function handleToolCallEnd(
 
     // File attention token cost
     if (tokenCost) {
-      const matchedTc = Array.from(state.toolCalls.values()).find(tc => tc.agentId === agentName && tc.toolName === toolName)
+      const matchedTc = Array.from(state.toolCalls.values()).find(tc => tc.agentId === agentKey && tc.toolName === toolName)
       const filePath = extractFilePath(matchedTc?.inputData, matchedTc?.args)
       if (filePath) {
         const existing = state.fileAttention.get(filePath)
@@ -162,7 +167,7 @@ export function handleToolCallEnd(
       }
     }
 
-    appendConversation(state.conversations, agentName, {
+    appendConversation(state.conversations, agentKey, {
       type: 'tool_result',
       content: `< ${result}${tokenCost ? ` (${tokenCost} tokens)` : ''}`,
       timestamp: currentTime,

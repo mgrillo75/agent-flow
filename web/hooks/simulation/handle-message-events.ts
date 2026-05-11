@@ -9,6 +9,8 @@ export function handleMessage(
   state: MutableEventState,
 ): void {
   const agentName = asString(payload.agent)
+  const agentId = asString(payload.agent_id, agentName)
+  const agentKey = state.agents.has(agentId) ? agentId : (state.agents.has(agentName) ? agentName : agentId)
   const content = asString(payload.content)
   const role = typeof payload.role === 'string' ? payload.role : undefined
 
@@ -20,15 +22,15 @@ export function handleMessage(
 
   // Rename main agent to the first user message (more recognizable than "orchestrator")
   if (role === 'user') {
-    const msgAgentForName = state.agents.get(agentName)
-    if (msgAgentForName && msgAgentForName.isMain && msgAgentForName.name === agentName) {
+    const msgAgentForName = state.agents.get(agentKey)
+    if (msgAgentForName && msgAgentForName.isMain && msgAgentForName.name === msgAgentForName.id) {
       const shortName = content.slice(0, LABEL_LEN_NAME).replace(/\n/g, ' ').trim()
-      state.agents.set(agentName, { ...msgAgentForName, name: shortName || agentName, task: content.slice(0, LABEL_LEN_TASK) })
+      state.agents.set(agentKey, { ...msgAgentForName, name: shortName || msgAgentForName.name, task: content.slice(0, LABEL_LEN_TASK) })
     }
   }
 
   // Update agent state and push message bubble to queue
-  const msgAgent = state.agents.get(agentName)
+  const msgAgent = state.agents.get(agentKey)
   if (msgAgent) {
     const bubbleRole: 'user' | 'thinking' | 'assistant' = role === 'user' ? 'user' : role === 'thinking' ? 'thinking' : 'assistant'
     const updates: Partial<typeof msgAgent> = {}
@@ -50,11 +52,11 @@ export function handleMessage(
       }
     }
     if (Object.keys(updates).length > 0) {
-      state.agents.set(agentName, { ...msgAgent, ...updates })
+      state.agents.set(agentKey, { ...msgAgent, ...updates })
     }
   }
 
-  appendConversation(state.conversations, agentName, { type: msgType, content, timestamp: currentTime })
+  appendConversation(state.conversations, agentKey, { type: msgType, content, timestamp: currentTime })
 }
 
 export function handleContextUpdate(
@@ -62,6 +64,8 @@ export function handleContextUpdate(
   state: MutableEventState,
 ): void {
   const agentName = asString(payload.agent)
+  const agentId = asString(payload.agent_id, agentName)
+  const agentKey = state.agents.has(agentId) ? agentId : (state.agents.has(agentName) ? agentName : agentId)
   const tokens = asNumber(payload.tokens)
   const raw = payload.breakdown
   const breakdown = (raw && typeof raw === 'object' && 'systemPrompt' in raw) ? raw as ContextBreakdown : undefined
@@ -70,9 +74,9 @@ export function handleContextUpdate(
   const tokensMaxOverride = typeof payload.tokensMax === 'number' && payload.tokensMax > 0
     ? payload.tokensMax
     : undefined
-  const agent = state.agents.get(agentName)
+  const agent = state.agents.get(agentKey)
   if (agent) {
-    state.agents.set(agentName, {
+    state.agents.set(agentKey, {
       ...agent,
       tokensUsed: tokens,
       tokensMax: tokensMaxOverride ?? agent.tokensMax,

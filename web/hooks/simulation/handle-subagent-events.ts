@@ -9,7 +9,9 @@ export function handleSubagentDispatch(
 ): void {
   const parentName = asString(payload.parent)
   const childName = asString(payload.child)
-  const eid = edgeId(parentName, childName)
+  const parentId = asString(payload.parent_id, parentName)
+  const childId = asString(payload.child_id, asString(payload.agent_id, childName))
+  const eid = edgeId(parentId, childId)
   const task = asString(payload.task)
 
   state.particles.push({
@@ -28,7 +30,9 @@ export function handleSubagentReturn(
 ): void {
   const parentName = asString(payload.parent)
   const childName = asString(payload.child)
-  const eid = edgeId(parentName, childName)
+  const parentId = asString(payload.parent_id, parentName)
+  const childId = asString(payload.child_id, asString(payload.agent_id, childName))
+  const eid = edgeId(parentId, childId)
   const summary = asString(payload.summary)
 
   state.particles.push({

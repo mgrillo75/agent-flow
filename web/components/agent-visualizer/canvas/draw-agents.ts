@@ -35,7 +35,7 @@ export function drawClaudeSpark(ctx: CanvasRenderingContext2D, cx: number, cy: n
 export function drawOpenAILogo(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string) {
   ctx.save()
   ctx.translate(cx, cy)
-  // Target diameter matches the Claude spark: (r * sparkScale) total.
+  // Target diameter matches the shared icon sizing: (r * sparkScale) total.
   const scale = (r * AGENT_DRAW.sparkScale) / OPENAI_LOGO_VIEWBOX
   ctx.scale(scale, scale)
   ctx.translate(-OPENAI_LOGO_VIEWBOX / 2, -OPENAI_LOGO_VIEWBOX / 2)
@@ -46,14 +46,14 @@ export function drawOpenAILogo(ctx: CanvasRenderingContext2D, cx: number, cy: nu
   ctx.restore()
 }
 
-/** Pick the brand logo for the agent's runtime. Defaults to Claude. */
+/** Pick the brand logo for the agent's runtime. Defaults to Codex. */
 export function drawAgentBrand(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, r: number, color: string,
   runtime: Agent['runtime'],
 ) {
-  if (runtime === 'codex') drawOpenAILogo(ctx, cx, cy, r, color)
-  else drawClaudeSpark(ctx, cx, cy, r, color)
+  if (runtime === 'claude') drawClaudeSpark(ctx, cx, cy, r, color)
+  else drawOpenAILogo(ctx, cx, cy, r, color)
 }
 
 export function drawContextComposition(

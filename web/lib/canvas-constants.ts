@@ -204,9 +204,9 @@ export const AGENT_DRAW = {
   /** Waiting state breathe parameters */
   waitingBreatheSpeed: 1.2,
   waitingBreatheAmp: 0.08,
-  /** Claude spark logo scale factor (relative to radius / SVG viewBox) */
+  /** Center icon scale factor (relative to radius / SVG viewBox) */
   sparkScale: 0.45,
-  /** SVG viewBox size for Claude spark path */
+  /** SVG viewBox size for the spark path */
   sparkViewBox: 256,
   /** Sub-agent icon font size relative to radius */
   subIconScale: 0.45,

@@ -16,7 +16,7 @@ let eventSource: JsonlEventSource | undefined
 let runtimes: AgentRuntime[] = []
 
 function readConfiguredMode(): ConfiguredRuntimeMode {
-  const raw = vscode.workspace.getConfiguration('agentVisualizer').get<string>('runtime', 'auto')
+  const raw = vscode.workspace.getConfiguration('agentVisualizer').get<string>('runtime', 'codex')
   return raw === 'claude' || raw === 'codex' ? raw : 'auto'
 }
 
@@ -31,7 +31,7 @@ async function startRuntimes(
 ): Promise<StartRuntimesResult> {
   const runtimes: AgentRuntime[] = []
   const failures: AgentRuntimeMode[] = []
-  if (mode === 'claude' || mode === 'auto') {
+  if (mode === 'claude') {
     log.info('Starting Claude runtime...')
     try { runtimes.push(await startClaudeRuntime(context)) }
     catch (err) { log.error('Claude runtime failed to start:', err); failures.push('claude') }
@@ -85,7 +85,7 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('agentVisualizer.connectToAgent', async () => {
       const choice = await vscode.window.showQuickPick(
         [
-          { label: '$(radio-tower) Claude Code Hooks', description: 'Auto-configure hooks for live streaming', value: 'hooks' },
+          { label: '$(pulse) Codex Session Watch', description: 'Codex sessions are detected automatically', value: 'codex' },
           { label: '$(file) Watch JSONL File', description: 'Watch a file for agent events', value: 'jsonl' },
           { label: '$(play) Mock Data', description: 'Use built-in demo scenario', value: 'mock' },
         ],
@@ -94,8 +94,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
       if (!choice) { return }
 
-      if (choice.value === 'hooks') {
-        await configureClaudeHooks()
+      if (choice.value === 'codex') {
+        vscode.window.showInformationMessage('Codex session watching is active. Start or resume a Codex run to stream events.')
       } else if (choice.value === 'jsonl') {
         const fileUri = await vscode.window.showOpenDialog({
           canSelectFiles: true,

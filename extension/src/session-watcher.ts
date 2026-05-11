@@ -501,7 +501,7 @@ export class SessionWatcher implements AgentSessionWatcher {
         this.emit({
           time: this.elapsed(sessionId),
           type: 'agent_complete',
-          payload: { name: ORCHESTRATOR_NAME },
+          payload: { name: ORCHESTRATOR_NAME, sessionEnd: true },
         }, sessionId)
         this._onSessionLifecycle.fire({ type: 'ended', sessionId, label: session.label })
       }
