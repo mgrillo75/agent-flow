@@ -5,7 +5,6 @@ import { Z } from "@/lib/agent-types"
 import { COLORS } from "@/lib/colors"
 import { formatTokens } from "@/lib/utils"
 import { agentCost } from "./canvas/draw-cost"
-import { SessionTabs } from "./session-tabs"
 import type { SessionInfo, ConnectionStatus } from "@/lib/bridge-types"
 
 // ─── Mute/Unmute SVG Icons ───────────────────────────────────────────────────
@@ -100,6 +99,10 @@ export interface TopBarProps {
   onToggleMute: () => void
 }
 
+function sortByRecency(a: SessionInfo, b: SessionInfo): number {
+  return b.lastActivityTime - a.lastActivityTime
+}
+
 export const TopBar = memo(function TopBar({
   sessions, selectedSessionId, sessionsWithActivity,
   onSelectSession, onCloseSession,
@@ -108,58 +111,168 @@ export const TopBar = memo(function TopBar({
   showFileAttention, showTranscript, showCostOverlay, showTimeline, isMuted,
   onTogglePanel, onToggleTimeline, onToggleMute,
 }: TopBarProps) {
+  const activeSessions = sessions
+    .filter(session => session.status === 'active')
+    .sort(sortByRecency)
+
+  const selectedSession = selectedSessionId
+    ? sessions.find(session => session.id === selectedSessionId) || null
+    : null
+
+  // Keep only the current live session in the top strip.
+  const liveSession = selectedSession?.status === 'active'
+    ? selectedSession
+    : activeSessions[0] || selectedSession || sessions[0] || null
+
+  const historicalSessions = sessions
+    .filter(session => session.id !== liveSession?.id)
+    .sort(sortByRecency)
+
+  const isViewingLive = !!liveSession && selectedSessionId === liveSession.id
+
   return (
-    <div className="absolute top-3 left-3 right-3 flex items-center gap-4 font-mono text-[10px]" style={{ zIndex: Z.info }}>
-      {/* Session tabs — scrollable, takes available space */}
-      {sessions.length > 1 && (
-        <div className="min-w-0 flex-shrink overflow-x-auto scrollbar-hide">
-          <SessionTabs
-            sessions={sessions}
-            selectedSessionId={selectedSessionId}
-            sessionsWithActivity={sessionsWithActivity}
-            onSelectSession={onSelectSession}
-            onCloseSession={onCloseSession}
-          />
-        </div>
-      )}
-
-      {/* Spacer pushes info to the right */}
-      <div className="flex-1" />
-
-      {/* Right-side info/controls */}
-      <div className="flex items-center gap-4 flex-shrink-0" style={{ color: COLORS.textMuted }}>
-        {isVSCode && <ConnectionIndicator status={connectionStatus} />}
-        <span>{agentCount} agents</span>
-        <span>
-          {formatTokens(totalTokens)} tokens
-          <span style={{ color: COLORS.complete + '65', marginLeft: 4 }}>
-            ~${agentCost(totalTokens).toFixed(2)}
-          </span>
-        </span>
-
-        {/* Mutually exclusive panel group */}
-        <div className="flex items-center gap-1 px-1 py-0.5 rounded" style={{
-          background: COLORS.holoBg03,
-          border: `1px solid ${COLORS.holoBorder06}`,
-        }}>
-          <ToggleButton active={showFileAttention} onClick={() => onTogglePanel('files')} style={{ background: showFileAttention ? undefined : 'transparent', border: 'none' }}>Files</ToggleButton>
-          <ToggleButton active={showTranscript} onClick={() => onTogglePanel('transcript')} style={{ background: showTranscript ? undefined : 'transparent', border: 'none' }}>Chat</ToggleButton>
-          <ToggleButton
-            active={showCostOverlay}
-            onClick={() => onTogglePanel('cost')}
-            activeColor={{ bg: COLORS.costActiveBg, text: COLORS.complete }}
-            style={{ background: showCostOverlay ? undefined : 'transparent', border: 'none' }}
+    <>
+      <div className="absolute top-3 left-3 right-3 flex items-start gap-4 font-mono text-[10px]" style={{ zIndex: Z.info }}>
+        {/* Live session strip */}
+        {liveSession && (
+          <div
+            className="min-w-0 max-w-[42vw] rounded px-2 py-1"
+            style={{
+              background: COLORS.glassBg,
+              border: `1px solid ${COLORS.glassBorder}`,
+              boxShadow: `0 0 8px ${COLORS.holoBg10}`,
+            }}
           >
-            $Cost
+            <div className="mb-0.5 text-[8px] tracking-wide uppercase" style={{ color: COLORS.textMuted }}>
+              Live Session
+            </div>
+            <button
+              onClick={() => onSelectSession(liveSession.id)}
+              className="w-full flex items-center gap-1.5 rounded px-1 py-0.5 text-left"
+              style={{
+                background: COLORS.tabSelectedBg,
+                border: `1px solid ${COLORS.tabSelectedBorder}`,
+                color: COLORS.holoBright,
+              }}
+            >
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+                style={{
+                  background: COLORS.complete,
+                  boxShadow: `0 0 4px ${COLORS.complete}`,
+                }}
+              />
+              <span className="truncate">{liveSession.label}</span>
+            </button>
+            {!isViewingLive && (
+              <div className="mt-0.5 text-[8px] truncate" style={{ color: COLORS.textMuted }}>
+                Viewing historical session
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Spacer pushes info to the right */}
+        <div className="flex-1" />
+
+        {/* Right-side info/controls */}
+        <div className="flex items-center gap-4 flex-shrink-0" style={{ color: COLORS.textMuted }}>
+          {isVSCode && <ConnectionIndicator status={connectionStatus} />}
+          <span>{agentCount} agents</span>
+          <span>
+            {formatTokens(totalTokens)} tokens
+            <span style={{ color: COLORS.complete + '65', marginLeft: 4 }}>
+              ~${agentCost(totalTokens).toFixed(2)}
+            </span>
+          </span>
+
+          {/* Mutually exclusive panel group */}
+          <div className="flex items-center gap-1 px-1 py-0.5 rounded" style={{
+            background: COLORS.holoBg03,
+            border: `1px solid ${COLORS.holoBorder06}`,
+          }}>
+            <ToggleButton active={showFileAttention} onClick={() => onTogglePanel('files')} style={{ background: showFileAttention ? undefined : 'transparent', border: 'none' }}>Files</ToggleButton>
+            <ToggleButton active={showTranscript} onClick={() => onTogglePanel('transcript')} style={{ background: showTranscript ? undefined : 'transparent', border: 'none' }}>Chat</ToggleButton>
+            <ToggleButton
+              active={showCostOverlay}
+              onClick={() => onTogglePanel('cost')}
+              activeColor={{ bg: COLORS.costActiveBg, text: COLORS.complete }}
+              style={{ background: showCostOverlay ? undefined : 'transparent', border: 'none' }}
+            >
+              $Cost
+            </ToggleButton>
+          </div>
+
+          {/* Independent toggles */}
+          <ToggleButton active={showTimeline} onClick={onToggleTimeline}>Timeline</ToggleButton>
+          <ToggleButton active={!isMuted} onClick={onToggleMute} style={{ border: `1px solid ${COLORS.toggleBorder}` }}>
+            {isMuted ? <MutedIcon /> : <UnmutedIcon />}
           </ToggleButton>
         </div>
-
-        {/* Independent toggles */}
-        <ToggleButton active={showTimeline} onClick={onToggleTimeline}>Timeline</ToggleButton>
-        <ToggleButton active={!isMuted} onClick={onToggleMute} style={{ border: `1px solid ${COLORS.toggleBorder}` }}>
-          {isMuted ? <MutedIcon /> : <UnmutedIcon />}
-        </ToggleButton>
       </div>
-    </div>
+
+      {/* Historical sessions card — compact rows on the side */}
+      {historicalSessions.length > 0 && (
+        <div className="absolute top-14 right-3 font-mono text-[10px]" style={{ zIndex: Z.info }}>
+          <div
+            className="rounded px-2 py-1.5"
+            style={{
+              width: 'min(260px, 30vw)',
+              minWidth: 170,
+              background: COLORS.glassBg,
+              border: `1px solid ${COLORS.glassBorder}`,
+              boxShadow: `0 0 12px ${COLORS.holoBg10}`,
+            }}
+          >
+            <div className="mb-1 flex items-center justify-between text-[8px] uppercase tracking-wide" style={{ color: COLORS.textMuted }}>
+              <span>Session History</span>
+              <span>{historicalSessions.length}</span>
+            </div>
+            <div className="max-h-44 overflow-y-auto pr-1 space-y-1">
+              {historicalSessions.map((session) => {
+                const isSelected = session.id === selectedSessionId
+                const isActive = session.status === 'active'
+                const hasActivity = sessionsWithActivity.has(session.id)
+                const showGreen = isActive || hasActivity
+
+                return (
+                  <button
+                    key={session.id}
+                    onClick={() => onSelectSession(session.id)}
+                    className="group w-full px-1.5 py-0.5 rounded transition-all flex items-center gap-1"
+                    style={{
+                      whiteSpace: 'nowrap',
+                      background: isSelected ? COLORS.tabSelectedBg : COLORS.tabInactiveBg,
+                      border: `1px solid ${isSelected ? COLORS.tabSelectedBorder : COLORS.tabInactiveBorder}`,
+                      color: isSelected ? COLORS.holoBright : COLORS.textMuted,
+                    }}
+                  >
+                    <span
+                      className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+                      style={{
+                        background: showGreen ? COLORS.complete : COLORS.idle + '40',
+                        boxShadow: showGreen ? `0 0 4px ${COLORS.complete}` : 'none',
+                        animation: hasActivity && !isSelected ? 'pulse 1.5s infinite' : 'none',
+                      }}
+                    />
+                    <span className="truncate flex-1 text-left">{session.label}</span>
+                    <span
+                      className="ml-0.5 opacity-0 group-hover:opacity-60 transition-opacity cursor-pointer flex-shrink-0"
+                      style={{ color: COLORS.tabClose, fontSize: 8, lineHeight: '10px' }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onCloseSession(session.id)
+                      }}
+                    >
+                      ✕
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 })
